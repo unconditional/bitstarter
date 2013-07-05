@@ -19,19 +19,25 @@ References:
    - http://en.wikipedia.org/wiki/JSON
    - https://developer.mozilla.org/en-US/docs/JSON
    - https://developer.mozilla.org/en-US/docs/JSON#JSON_in_Firefox_2
+   
+ + restler
+   - https://github.com/danwrong/restler
 */
 
 var fs = require('fs');
 var program = require('commander');
 var cheerio = require('cheerio');
+var sys = require('util');
+var rest = require('restler');
 
 var HTMLFILE_DEFAULT = "index.html";
+var HTMLFILE_FROM_URL = "url.html";
 var CHECKSFILE_DEFAULT = "checks.json";
 
 var assertFileExists = function(infile) {
     var instr = infile.toString();
     if(!fs.existsSync(instr)) {
-        console.log("%s does not exist. Exiting.", instr);
+        console.error("%s does not exist. Exiting.", instr);
         process.exit(1); // http://nodejs.org/api/process.html#process_process_exit_code
     }
     return instr;
@@ -56,6 +62,44 @@ var checkHtmlFile = function(htmlfile, checksfile) {
     return out;
 };
 
+var getUrl = function(url2check)
+{
+    // get with restler from url2check
+    rest.get(url2check).on('complete', function(result) 
+    {
+        if (result instanceof Error) 
+        {
+            console.error('URL check error: ' + result.message);
+            process.exit(1);
+        } 
+        else 
+        {
+            var htmlfile = HTMLFILE_FROM_URL; 
+            fs.writeFile(htmlfile, result, function (err) 
+            {
+                if (err) 
+                    throw err;
+                    
+                console.log('File %s saved!', htmlfile);
+                
+                return htmlfile;
+            });
+        }
+    });    
+}
+
+var checkUrl = function(url2check, checksfile) 
+{
+    var htmlfile = getUrl(url2check);
+    if ( !htmlfile )
+    {
+        console.error("Failed to write HTML file from URL!");
+        process.exit(1);
+    }
+    
+    return checkHtmlFile( htmlfile, checksfile );
+};
+
 var clone = function(fn) {
     // Workaround for commander.js issue.
     // http://stackoverflow.com/a/6772648
@@ -65,10 +109,32 @@ var clone = function(fn) {
 if(require.main == module) {
     program
         .option('-c, --checks <check_file>', 'Path to checks.json', clone(assertFileExists), CHECKSFILE_DEFAULT)
-        .option('-f, --file <html_file>', 'Path to index.html', clone(assertFileExists), HTMLFILE_DEFAULT)
+        .option('-f, --file [html_file]', 'Path to index.html', '')
+        .option('-u, --url [url]', 'URL to check', '')
         .parse(process.argv);
 
-    var checkJson = checkHtmlFile(program.file, program.checks);
+    // typeof variable === 'undefined'
+    if ( typeof program.file === 'undefined' && typeof program.url === 'undefined')
+    {
+        console.error("Either --url or --file parameter should be specified.");
+        program.help();
+        process.exit(1);
+    }
+    
+    var checkJson;
+    
+    if ( program.url )
+    {
+        console.log("Checking URL: %s", program.url);
+        checkJson = checkUrl(program.url, program.checks);
+    }
+    else if ( program.file )// --file
+    {
+        console.log("Checking file: %s", program.file);
+        assertFileExists(program.file);
+        checkJson = checkHtmlFile(program.file, program.checks);
+    }
+    
     var outJson = JSON.stringify(checkJson, null, 4);
     console.log(outJson);
 } else {
