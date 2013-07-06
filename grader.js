@@ -29,10 +29,13 @@ var program = require('commander');
 var cheerio = require('cheerio');
 var sys = require('util');
 var rest = require('restler');
+var Step = require('step');
 
 var HTMLFILE_DEFAULT = "index.html";
 var HTMLFILE_FROM_URL = "url.html";
 var CHECKSFILE_DEFAULT = "checks.json";
+
+var syncFlag = 0;
 
 var assertFileExists = function(infile) {
     var instr = infile.toString();
@@ -51,7 +54,14 @@ var loadChecks = function(checksfile) {
     return JSON.parse(fs.readFileSync(checksfile));
 };
 
+var printResult = function(checkJson)
+{
+    var outJson = JSON.stringify(checkJson, null, 4);
+    console.log("Check result:\n%s", outJson);
+};
+
 var checkHtmlFile = function(htmlfile, checksfile) {
+    debugger;
     $ = cheerioHtmlFile(htmlfile);
     var checks = loadChecks(checksfile).sort();
     var out = {};
@@ -62,42 +72,51 @@ var checkHtmlFile = function(htmlfile, checksfile) {
     return out;
 };
 
-var getUrl = function(url2check)
-{
-    // get with restler from url2check
-    rest.get(url2check).on('complete', function(result) 
-    {
-        if (result instanceof Error) 
-        {
-            console.error('URL check error: ' + result.message);
-            process.exit(1);
-        } 
-        else 
-        {
-            var htmlfile = HTMLFILE_FROM_URL; 
-            fs.writeFile(htmlfile, result, function (err) 
-            {
-                if (err) 
-                    throw err;
-                    
-                console.log('File %s saved!', htmlfile);
-                
-                return htmlfile;
-            });
-        }
-    });    
-}
-
 var checkUrl = function(url2check, checksfile) 
 {
-    var htmlfile = getUrl(url2check);
-    if ( !htmlfile )
-    {
-        console.error("Failed to write HTML file from URL!");
-        process.exit(1);
-    }
-    
-    return checkHtmlFile( htmlfile, checksfile );
+    Step (
+        function getUrl()
+        {      
+            rest.get(url2check).on('complete', this);
+        },
+        function writeResultTmpFile(result)
+        {
+            if (result instanceof Error) 
+            {
+                console.error('URL check error: ' + result.message);
+                process.exit(1);
+            } 
+            else 
+            {
+                fs.writeFile(HTMLFILE_FROM_URL, result, this);
+            }
+        },
+        function processResult(err)
+        {
+            if (err) 
+            {
+                console.error( arguments.callee.name + " : error : " + err);
+                throw err;
+            }
+                    
+            console.log('File %s saved!', HTMLFILE_FROM_URL);
+            
+            var checkJson = checkHtmlFile(HTMLFILE_FROM_URL, checksfile);
+            printResult(checkJson);
+        },
+        function removeTmpFile(err)
+        {
+            if (err) 
+            {
+                console.error( arguments.callee.name + " : error : " + err);
+                throw err;
+            }
+            
+            fs.unlink(HTMLFILE_FROM_URL, function(err) { 
+                console.error('Failed to remove %s', HTMLFILE_FROM_URL); 
+                });
+        }
+    );
 };
 
 var clone = function(fn) {
@@ -126,17 +145,18 @@ if(require.main == module) {
     if ( program.url )
     {
         console.log("Checking URL: %s", program.url);
-        checkJson = checkUrl(program.url, program.checks);
+        checkUrl(program.url, program.checks);
     }
-    else if ( program.file )// --file
+    else if ( program.file )
     {
         console.log("Checking file: %s", program.file);
         assertFileExists(program.file);
         checkJson = checkHtmlFile(program.file, program.checks);
+        
+        printResult(checkJson);
     }
     
-    var outJson = JSON.stringify(checkJson, null, 4);
-    console.log(outJson);
+    
 } else {
     exports.checkHtmlFile = checkHtmlFile;
 }
